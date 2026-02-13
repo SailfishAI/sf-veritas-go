@@ -1,0 +1,47 @@
+Business Source License 1.1
+
+Licensor: SailfishAI, Inc.
+Licensed Work: Sailfish Veritas (and associated source code in this repository)
+Additional Use Grant: You may use, copy, modify, and create derivative works of this software for non-production, non-commercial, or internal business purposes only.
+
+Change Date: Four (4) years after each version’s release date.
+Change License: Apache License, Version 2.0
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work, subject to the following limitations:
+
+1. Production Use Limitation
+
+You may not use this Licensed Work in a production environment to provide a commercial product or service that competes directly or indirectly with SailfishAI’s products or services, including but not limited to:
+
+- AI-powered software development platforms
+- AI agent orchestration platforms
+- AI debugging or AI-assisted development tools
+- Software observability platforms for AI-driven development workflows
+
+2. Commercial Restriction
+
+You may not sell, sublicense, or offer the Licensed Work (or derivative works) as a hosted or managed service without a separate commercial agreement with SailfishAI, Inc.
+
+3. Internal Use
+
+Internal use within your own organization for development, evaluation, research, or internal operational purposes is permitted.
+
+4. Non-Production Use
+
+Use of the Licensed Work for testing, academic research, or proof-of-concept deployments is permitted.
+
+5. Change License
+
+On the Change Date (four years after each version’s release), the Licensed Work shall automatically be governed by the Apache License, Version 2.0.
+
+6. Patent Grant
+
+Upon conversion to the Change License, any applicable patent rights will be governed by Apache License 2.0 terms.
+
+Disclaimer
+
+This software is provided “as is” without warranty of any kind.
+
+This License does not grant you any trademark rights in the Sailfish name, logo, or branding.
