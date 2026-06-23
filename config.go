@@ -18,7 +18,7 @@ const (
 )
 
 const (
-	defaultGraphQLEndpoint  = "https://api-service.sailfishqa.com/graphql/"
+	defaultGraphQLEndpoint  = "https://api-service.sailfish.ai/graphql/"
 	nonsessionApplogs       = "nonsession-applogs"
 	tracingHeader           = "X-Sf3-Rid"
 	parentSessionHeader     = "X-Sf4-Prid"
@@ -32,7 +32,7 @@ type Options struct {
 	APIKey string
 
 	// GraphQLEndpoint is the URL to send telemetry to.
-	// Default: "https://api-service.sailfishqa.com/graphql/"
+	// Default: "https://api-service.sailfish.ai/graphql/"
 	// Override via SAILFISH_GRAPHQL_ENDPOINT env var.
 	GraphQLEndpoint string
 

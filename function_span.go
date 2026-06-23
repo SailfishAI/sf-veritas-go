@@ -63,6 +63,16 @@ func StartSpanWithArgs(ctx context.Context, functionName string, args interface{
 	return startSpanInternal(ctx, functionName, argsJSON, 2)
 }
 
+// StartSpanNoCtx is like StartSpanWithArgs but for functions that have no
+// context.Context to thread through; it uses context.Background(). It exists so
+// the toolexec auto-instrumenter can start a span for a context-less function
+// WITHOUT having to inject a `context` import into the user's package (the only
+// import the instrumenter then needs to add is sfveritas itself).
+func StartSpanNoCtx(functionName string, args interface{}) *Span {
+	argsJSON := marshalWithLimit(args, getArgLimitBytes())
+	return startSpanInternal(context.Background(), functionName, argsJSON, 2)
+}
+
 // funcspanOverrideConfig holds parsed override values from the X-Sf3-FunctionSpanCaptureOverride header.
 type funcspanOverrideConfig struct {
 	captureArgs       bool

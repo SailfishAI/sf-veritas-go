@@ -45,7 +45,12 @@ var (
 
 func initTransmitter(endpoint string) *transmitter {
 	transmitterOnce.Do(func() {
-		batchMax := 512
+		// Default 1: telemetry is sent one operation per HTTP request (see flush),
+		// because the Sailfish GraphQL endpoint does not support GraphQL transport
+		// batching. The batch buffer only groups how many items a flush drains; it
+		// never affects the wire shape (each item is still its own POST), so this is
+		// a conservative default rather than a correctness requirement.
+		batchMax := 1
 		if v := os.Getenv("SF_NBPOST_BATCH_MAX"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				batchMax = n
@@ -134,48 +139,38 @@ func (t *transmitter) run() {
 	}
 }
 
+// flush delivers every buffered item. Each telemetry item is sent as its OWN
+// HTTP POST (one GraphQL operation per request). The Sailfish GraphQL endpoint
+// (Strawberry) does not support GraphQL transport batching — a top-level JSON
+// array of operations is rejected with HTTP 500 ("'list' object has no attribute
+// 'get'"). The batch buffer in run() therefore only controls flush *timing*, not
+// the wire shape. This mirrors the Java/JS SDKs, which also send one op per request.
 func (t *transmitter) flush(batch []transmitItem) {
-	if len(batch) == 0 {
-		return
+	for i := range batch {
+		t.postOne(batch[i])
 	}
+}
 
+// postOne sends a single GraphQL operation as one HTTP POST with a JSON object
+// body {query, variables, operationName}.
+func (t *transmitter) postOne(item transmitItem) {
 	cfg := getConfig()
 
-	// Reuse buffer from pool to avoid allocation per flush
+	// Reuse buffer from pool to avoid allocation per send
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer bufPool.Put(buf)
 
 	enc := json.NewEncoder(buf)
-
-	if len(batch) == 1 {
-		item := batch[0]
-		err := enc.Encode(map[string]interface{}{
-			"query":         item.query,
-			"variables":     item.variables,
-			"operationName": item.operationName,
-		})
-		if err != nil {
-			if cfg != nil && cfg.debug {
-				fmt.Fprintf(os.Stderr, "[sfveritas] JSON marshal error: %v\n", err)
-			}
-			return
+	if err := enc.Encode(map[string]interface{}{
+		"query":         item.query,
+		"variables":     item.variables,
+		"operationName": item.operationName,
+	}); err != nil {
+		if cfg != nil && cfg.debug {
+			fmt.Fprintf(os.Stderr, "[sfveritas] JSON marshal error: %v\n", err)
 		}
-	} else {
-		payloads := make([]map[string]interface{}, 0, len(batch))
-		for _, item := range batch {
-			payloads = append(payloads, map[string]interface{}{
-				"query":         item.query,
-				"variables":     item.variables,
-				"operationName": item.operationName,
-			})
-		}
-		if err := enc.Encode(payloads); err != nil {
-			if cfg != nil && cfg.debug {
-				fmt.Fprintf(os.Stderr, "[sfveritas] JSON marshal error: %v\n", err)
-			}
-			return
-		}
+		return
 	}
 
 	var req *http.Request
@@ -220,7 +215,7 @@ func (t *transmitter) flush(batch []transmitItem) {
 	resp.Body.Close()
 
 	if cfg != nil && cfg.debug {
-		fmt.Fprintf(os.Stderr, "[sfveritas] Sent batch of %d items, status=%d\n", len(batch), resp.StatusCode)
+		fmt.Fprintf(os.Stderr, "[sfveritas] Sent %s, status=%d\n", item.operationName, resp.StatusCode)
 	}
 }
 
