@@ -70,5 +70,4 @@ for the complete reference.
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1) — see [LICENSE](./LICENSE). The Change
-License is Apache-2.0.
+Apache License 2.0 — see [LICENSE](./LICENSE).
