@@ -14,8 +14,10 @@ func TestMapSlogLevel_Error(t *testing.T) {
 }
 
 func TestMapSlogLevel_Warn(t *testing.T) {
-	if mapSlogLevel(slog.LevelWarn) != "WARN" {
-		t.Errorf("expected WARN, got %s", mapSlogLevel(slog.LevelWarn))
+	// Must be the full word "WARNING" — the backend's LogLevel enum and
+	// log-severity classifier don't recognize "WARN".
+	if mapSlogLevel(slog.LevelWarn) != "WARNING" {
+		t.Errorf("expected WARNING, got %s", mapSlogLevel(slog.LevelWarn))
 	}
 }
 
@@ -33,8 +35,8 @@ func TestMapSlogLevel_Debug(t *testing.T) {
 
 func TestMapSlogLevel_CustomLevel(t *testing.T) {
 	// slog.Level is just an int, test values between standard levels
-	if mapSlogLevel(slog.LevelWarn+1) != "WARN" {
-		t.Error("expected WARN for level between Warn and Error")
+	if mapSlogLevel(slog.LevelWarn+1) != "WARNING" {
+		t.Error("expected WARNING for level between Warn and Error")
 	}
 	if mapSlogLevel(slog.LevelError+1) != "ERROR" {
 		t.Error("expected ERROR for level above Error")

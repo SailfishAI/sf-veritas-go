@@ -191,7 +191,11 @@ func mapSlogLevel(l slog.Level) string {
 	case l >= slog.LevelError:
 		return "ERROR"
 	case l >= slog.LevelWarn:
-		return "WARN"
+		// "WARNING", not "WARN": the backend's LogLevel enum and log-severity
+		// classifier only recognize the full word (matching the Python SDK and
+		// Python's logging.getLevelName). "WARN" is misclassified (shown as an
+		// error / unknown) in the logs view.
+		return "WARNING"
 	case l >= slog.LevelInfo:
 		return "INFO"
 	default:

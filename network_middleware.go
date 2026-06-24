@@ -83,33 +83,16 @@ func Middleware(next http.Handler) http.Handler {
 			ctx = SetFuncSpanOverride(ctx, funcspanOverride)
 		}
 
-		// 3. Generate page visit ID
-		ctx, pageVisitID := GetOrSetPageVisitID(ctx)
+		// 3. Keep a page-visit ID on the context for downstream spans.
+		ctx, _ = GetOrSetPageVisitID(ctx)
 
-		// 4. Get trace ID for outbound propagation
+		// 4. Get trace ID for the goroutine-local link and the network hop.
 		_, traceID := GetOrSetTraceID(ctx)
-
-		// 5. Extract parent session ID from inbound header
-		parentSessionID := r.Header.Get(parentSessionHeader)
 
 		// Update request context
 		r = r.WithContext(ctx)
 
-		// 6. Wrap response writer to capture status code (and optionally body)
-		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
-		if cfg.captureResponseBody {
-			rec.body = &bytes.Buffer{}
-		}
-
-		// 7. Capture request body if enabled
-		var requestBody string
-		if cfg.captureRequestBody && r.Body != nil {
-			requestBody = captureBody(r.Body, r.Header.Get("Content-Type"), cfg.requestBodyLimitBytes)
-			// Restore the body so the handler can still read it
-			r.Body = io.NopCloser(bytes.NewBufferString(requestBody))
-		}
-
-		// 8. Panic recovery
+		// 5. Panic recovery
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				transmitExceptionFromPanicInMiddleware(ctx, recovered)
@@ -117,7 +100,7 @@ func Middleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		// 8b. Register the trace against this goroutine so context-less telemetry
+		// 5b. Register the trace against this goroutine so context-less telemetry
 		// from the handler (plain slog.Info, fmt.Println, panics) correlates to
 		// this request without the customer threading ctx through every call.
 		// Handlers run synchronously on this goroutine; the deferred clear fires
@@ -126,83 +109,32 @@ func Middleware(next http.Handler) http.Handler {
 		setGoroutineTrace(gid, traceID)
 		defer clearGoroutineTrace(gid)
 
-		// Serve the request
-		next.ServeHTTP(rec, r)
+		// Serve the request.
+		next.ServeHTTP(w, r)
 
-		// 9. Record inbound network request
-		endTime := time.Now()
-		requestID := fastUUID()
-		success := rec.statusCode >= 200 && rec.statusCode < 400
-
-		// Collect headers (gated by env var, default off for OTEL compliance)
-		var reqHeaders, respHeaders map[string]interface{}
-		if cfg.captureRequestHeaders {
-			reqHeaders = collectHeaders(r.Header)
-		}
-		if cfg.captureResponseHeaders {
-			respHeaders = collectHeaders(rec.Header())
-		}
-
-		url := r.URL.String()
-		if r.URL.Host == "" {
-			url = r.Host + r.URL.RequestURI()
-		}
-
-		// Get current span ID from context
-		parentSpanID := GetCurrentSpanID(ctx)
-
-		data := map[string]interface{}{
-			"apiKey":              cfg.apiKey,
-			"requestId":          requestID,
-			"pageVisitId":        pageVisitID,
-			"recordingSessionId": traceID,
-			"serviceUuid":        cfg.serviceUUID,
-			"timestampStart":     startTime.UnixMilli(),
-			"timestampEnd":       endTime.UnixMilli(),
-			"responseCode":       rec.statusCode,
-			"success":            success,
-			"error":              nil,
-			"url":                url,
-			"method":             r.Method,
-			"requestHeaders":     reqHeaders,
-			"responseHeaders":    respHeaders,
-			"name":               r.URL.Path,
-			"parentSpanId":       nilIfEmpty(parentSpanID),
-			"parentSessionId":    nilIfEmpty(parentSessionID),
-		}
-
-		// Add captured bodies
-		if cfg.captureRequestBody && requestBody != "" {
-			data["requestBody"] = requestBody
-		}
-		if cfg.captureResponseBody && rec.body != nil && rec.body.Len() > 0 {
-			respBody := captureBodyFromBytes(rec.body.Bytes(), rec.Header().Get("Content-Type"), cfg.responseBodyLimitBytes)
-			if respBody != "" {
-				data["responseBody"] = respBody
-			}
-		}
-
-		nonBlockingPost("collectNetworkRequest", mutationCollectNetworkRequest, map[string]interface{}{
-			"data": data,
-		})
-
-		// 10. Send network hops — walk stack to find user code frame
-		file, line, funcName := findUserFrame(2)
+		// 6. Record a network HOP for this inbound request — NOT a network
+		// request. The network REQUEST is recorded by whoever made the call (the
+		// browser/recorder, or an upstream service's outbound transport, which
+		// also propagates X-Sf3-Rid). An inbound server only adds a hop showing
+		// the request entered this service, so it nests under the originating
+		// request instead of creating a second, duplicate request. This mirrors
+		// the Python SDK, whose web-framework middleware emits a hop, while
+		// collectNetworkRequest is reserved for outbound client calls.
 		hopsVars := map[string]interface{}{
 			"apiKey":      cfg.apiKey,
 			"sessionId":   traceID,
 			"timestampMs": strconv.FormatInt(time.Now().UnixMilli(), 10),
-			"line":        strconv.Itoa(line),
+			"line":        "0",
 			"column":      "0",
-			"name":        funcName,
-			"entrypoint":  file,
+			"name":        r.Method + " " + r.URL.Path,
+			"entrypoint":  r.URL.Path,
 			"serviceUuid": cfg.serviceUUID,
 		}
 		nonBlockingPost("collectNetworkHops", mutationCollectNetworkHops, hopsVars)
 
 		if cfg.debug {
-			fmt.Fprintf(os.Stderr, "[sfveritas] Inbound request: %s %s → %d (%s)\n",
-				r.Method, r.URL.Path, rec.statusCode, endTime.Sub(startTime))
+			fmt.Fprintf(os.Stderr, "[sfveritas] Inbound hop: %s %s (%s)\n",
+				r.Method, r.URL.Path, time.Since(startTime))
 		}
 	})
 }
