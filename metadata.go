@@ -59,7 +59,7 @@ func addOrUpdateMetadata(ctx context.Context, userID string, traits map[string]i
 		return
 	}
 
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 
 	// Serialize traits to JSON if not provided as string
 	var excludedFields []string

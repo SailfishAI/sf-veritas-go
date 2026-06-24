@@ -32,6 +32,7 @@ type transmitter struct {
 	endpoint string
 	wg       sync.WaitGroup
 	quit     chan struct{}
+	quitOnce sync.Once
 
 	batchMax    int
 	flushMs     int
@@ -126,10 +127,20 @@ func (t *transmitter) run() {
 				batch = batch[:0]
 			}
 		case <-t.quit:
-			// Drain remaining items
-			close(t.ch)
-			for item := range t.ch {
-				batch = append(batch, item)
+			// Drain what is buffered right now, then stop. We deliberately do NOT
+			// close(t.ch): a request still in flight during graceful shutdown can
+			// call nonBlockingPost concurrently, and a send on a closed channel
+			// panics even inside a select-with-default. Leaving the channel open
+			// (abandoned after we return) makes a late send a harmless no-op into
+			// the buffer instead of a process-killing panic. Items that arrive
+			// after this drain are dropped — acceptable fire-and-forget semantics.
+			//
+			// We snapshot len(t.ch) and read exactly that many rather than looping
+			// until empty: we are the only reader, so those items are guaranteed
+			// present, and a steady stream of concurrent sends can't starve us into
+			// draining forever.
+			for n := len(t.ch); n > 0; n-- {
+				batch = append(batch, <-t.ch)
 			}
 			if len(batch) > 0 {
 				t.flush(batch)
@@ -245,7 +256,11 @@ func Shutdown() {
 	if t == nil {
 		return
 	}
-	close(t.quit)
+	// Idempotent: a second Shutdown (e.g. defer + signal handler) must not
+	// double-close t.quit, which would panic.
+	t.quitOnce.Do(func() {
+		close(t.quit)
+	})
 	t.wg.Wait()
 }
 

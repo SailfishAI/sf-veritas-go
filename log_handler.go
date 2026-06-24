@@ -69,9 +69,10 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		sourceLine = f.Line
 	}
 
-	// Get trace ID and parent span ID from context
-	ctx2, sessionID := GetOrSetTraceID(ctx)
-	_ = ctx2
+	// Link to the request's trace if ctx carries one (e.g. slog.InfoContext with
+	// the request context); otherwise use the stable non-session ID. Do NOT mint
+	// a fresh ID per log.
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{
@@ -238,8 +239,9 @@ func (w *LogWriter) Write(p []byte) (n int, err error) {
 		sourceLine = line
 	}
 
-	// Use background context since standard log doesn't carry context
-	_, sessionID := GetOrSetTraceID(context.Background())
+	// Standard log carries no context; use the stable non-session ID rather than
+	// minting a fresh request ID per line.
+	sessionID := sessionIDFromContext(context.Background())
 
 	vars := mergeVariables(map[string]interface{}{
 		"sessionId":                sessionID,
@@ -279,7 +281,7 @@ func TransmitLog(ctx context.Context, level, message string) {
 	}
 
 	_, file, line, _ := runtime.Caller(1)
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{
@@ -299,7 +301,7 @@ func TransmitLog(ctx context.Context, level, message string) {
 
 // transmitLogInternal sends a log with explicit source info (used by print capture).
 func transmitLogInternal(ctx context.Context, level, message, sourceFile string, sourceLine int) {
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{

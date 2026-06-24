@@ -117,6 +117,15 @@ func Middleware(next http.Handler) http.Handler {
 			}
 		}()
 
+		// 8b. Register the trace against this goroutine so context-less telemetry
+		// from the handler (plain slog.Info, fmt.Println, panics) correlates to
+		// this request without the customer threading ctx through every call.
+		// Handlers run synchronously on this goroutine; the deferred clear fires
+		// even if the handler panics. See goroutine_local.go.
+		gid := curGoroutineID()
+		setGoroutineTrace(gid, traceID)
+		defer clearGoroutineTrace(gid)
+
 		// Serve the request
 		next.ServeHTTP(rec, r)
 

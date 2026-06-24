@@ -1,6 +1,7 @@
 Sailfish Veritas — Go SDK (sf-veritas-go)
 Copyright 2026 SailfishAI, Inc.
 
-This product is licensed under the Apache License, Version 2.0.
-You may obtain a copy of the License in the accompanying LICENSE file or at
-http://www.apache.org/licenses/LICENSE-2.0
+This product is licensed under the Business Source License 1.1 (BUSL-1.1).
+See the accompanying LICENSE file for the full terms. On the Change Date
+(four years after each version's release), the Licensed Work converts to
+the Apache License, Version 2.0.

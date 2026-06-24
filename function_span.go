@@ -282,7 +282,7 @@ func (s *Span) End(returnValue interface{}) {
 		returnValueStr = &rv
 	}
 
-	_, sessionID := GetOrSetTraceID(s.ctx)
+	sessionID := sessionIDFromContext(s.ctx)
 
 	vars := mergeVariables(map[string]interface{}{
 		"sessionId":    sessionID,

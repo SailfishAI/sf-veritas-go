@@ -11,6 +11,89 @@ import (
 	"testing"
 )
 
+// safeSend mimics nonBlockingPost's non-blocking enqueue. With the old shutdown
+// code (close(t.ch)), this would panic "send on closed channel" once run() had
+// drained; the fixed run() never closes the channel, so a late send is a no-op.
+func safeSend(tr *transmitter, item transmitItem) {
+	select {
+	case tr.ch <- item:
+	default:
+	}
+}
+
+// TestShutdownIsRaceFreeWithConcurrentPosts hammers the transmitter with
+// concurrent enqueues while it shuts down. It must drain and return without a
+// "send on closed channel" panic. Regression test for the graceful-shutdown
+// crash (a request emitting telemetry during Shutdown took the process down).
+func TestShutdownIsRaceFreeWithConcurrentPosts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	tr := &transmitter{
+		ch:       make(chan transmitItem, 64),
+		quit:     make(chan struct{}),
+		endpoint: srv.URL,
+		client:   srv.Client(),
+		batchMax: 1,
+		flushMs:  1,
+	}
+	tr.wg.Add(1)
+	go tr.run()
+
+	// Bounded senders: each fires a fixed number of posts, then exits. (An
+	// unbounded sender loop would never let run() drain to a stop and would
+	// deadlock the test.) These race the shutdown below — the part that used to
+	// panic "send on closed channel".
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 500; j++ {
+				safeSend(tr, transmitItem{query: "mutation X { x }", operationName: "X"})
+			}
+		}()
+	}
+
+	// Shut down concurrently with the in-flight senders.
+	tr.quitOnce.Do(func() { close(tr.quit) })
+
+	// Wait for senders to finish FIRST, then for run() to return. Ordering
+	// matters: run() can only retire once nothing else is touching the channel.
+	wg.Wait()
+	tr.wg.Wait()
+
+	// Keep sending AFTER the worker has stopped; must remain a safe no-op, never
+	// a panic (it would panic if run() had close()d the channel).
+	for i := 0; i < 100; i++ {
+		safeSend(tr, transmitItem{query: "mutation Y { y }", operationName: "Y"})
+	}
+}
+
+// TestShutdownIsIdempotent verifies a second Shutdown of the same transmitter
+// does not double-close t.quit (which would panic).
+func TestShutdownIsIdempotent(t *testing.T) {
+	tr := &transmitter{
+		ch:       make(chan transmitItem, 4),
+		quit:     make(chan struct{}),
+		batchMax: 1,
+		flushMs:  1,
+	}
+	tr.wg.Add(1)
+	go tr.run()
+
+	shutdown := func() {
+		tr.quitOnce.Do(func() { close(tr.quit) })
+		tr.wg.Wait()
+	}
+	shutdown()
+	shutdown() // second call must be a no-op, not a panic
+}
+
 // TestFlushSendsOneObjectPerItem verifies that a multi-item batch is delivered as
 // N separate HTTP POSTs, each with a JSON OBJECT body (never a top-level array).
 // The Sailfish GraphQL endpoint does not support GraphQL transport batching.

@@ -181,7 +181,7 @@ func transmitException(ctx context.Context, message string, wasCaught bool, trac
 		traceJSON = []byte("[]")
 	}
 
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{
@@ -231,7 +231,7 @@ func transmitExceptionWithCauses(ctx context.Context, message string, wasCaught 
 		traceJSON = []byte("[]")
 	}
 
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{
@@ -350,7 +350,7 @@ func transmitExceptionFromPanicInMiddleware(ctx context.Context, recovered inter
 		traceJSON = []byte("[]")
 	}
 
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{

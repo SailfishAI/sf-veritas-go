@@ -60,6 +60,25 @@ for caught errors.
   It instruments functions in packages that import `sfveritas`; third-party and
   CGO packages are skipped. See the docs for scope and limitations.
 
+## Capturing exceptions
+
+`sfveritas.TransmitError(ctx, err)` reports a caught error (with stack) from anywhere.
+
+Panics are only auto-captured where they actually reach the SDK. With **Gin**,
+`gin.Default()`'s built-in `Recovery()` swallows handler panics *before* the outer
+`sfveritas.Middleware` can see them — so register the Gin middleware, which captures the
+panic (and its stack) and re-panics so Gin still returns the 500:
+
+```go
+import veritasgin "github.com/SailfishAI/sf-veritas-go/gin"
+
+r := gin.Default()
+r.Use(veritasgin.Middleware()) // register BEFORE your routes
+```
+
+It also reports `c.Error(err)` errors and handled 5xx responses. For the precise stack at
+a specific error site, call `sfveritas.TransmitError(c.Request.Context(), err)` there.
+
 ## Configuration
 
 `Options` covers the common cases; behavior is further tunable via environment
@@ -70,4 +89,5 @@ for the complete reference.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](./LICENSE).
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](./LICENSE). Converts to
+Apache License 2.0 four years after each version's release.

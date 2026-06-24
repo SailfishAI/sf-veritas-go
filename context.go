@@ -3,6 +3,7 @@ package sfveritas
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type ctxKey int
@@ -40,6 +41,53 @@ func GetTraceID(ctx context.Context) string {
 		return tid
 	}
 	return ""
+}
+
+var (
+	nonSessionTraceOnce sync.Once
+	nonSessionTraceVal  string
+)
+
+// nonSessionTraceID returns a process-stable non-session trace ID, used for
+// telemetry emitted WITHOUT a request context (a plain slog.Info() / fmt.Println()).
+// It is generated once per process so such telemetry groups together, instead of
+// minting a fresh request ID per log/print/exception (which orphaned every line and
+// fabricated a one-off request for each).
+func nonSessionTraceID() string {
+	nonSessionTraceOnce.Do(func() {
+		apiKey := ""
+		if cfg := getConfig(); cfg != nil {
+			apiKey = cfg.apiKey
+		}
+		nonSessionTraceVal = fmt.Sprintf("%s-v3/%s/%s", nonsessionApplogs, apiKey, fastUUID())
+	})
+	return nonSessionTraceVal
+}
+
+// sessionIDFromContext resolves the trace ID for a piece of context-less telemetry
+// (a log, print, exception, or identify) in priority order:
+//
+//  1. An explicit trace on ctx — an inbound HTTP request, or slog.InfoContext(ctx, …)
+//     using the request context.
+//  2. The goroutine-local trace registered by the inbound middleware for the current
+//     handler goroutine — this is what makes a plain slog.Info() / fmt.Println()
+//     correlate to the request WITHOUT the customer threading ctx everywhere
+//     (see goroutine_local.go). Go's stand-in for Python contextvars / JS
+//     AsyncLocalStorage / Java ThreadLocal.
+//  3. The process-stable non-session ID, so telemetry emitted with no request at all
+//     groups together instead of fabricating a one-off request per emit.
+//
+// Use this for context-less telemetry EMIT paths only; do NOT use it for the
+// inbound/outbound network paths, which must mint a fresh trace per request via
+// GetOrSetTraceID.
+func sessionIDFromContext(ctx context.Context) string {
+	if tid := GetTraceID(ctx); tid != "" {
+		return tid
+	}
+	if tid := currentGoroutineTrace(); tid != "" {
+		return tid
+	}
+	return nonSessionTraceID()
 }
 
 // GetOrSetPageVisitID returns the page visit UUID from ctx, or generates one.

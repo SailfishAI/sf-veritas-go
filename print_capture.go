@@ -62,7 +62,7 @@ func startPrintCapture() {
 					sourceLine = lineNo
 				}
 
-				_, sessionID := GetOrSetTraceID(context.Background())
+				sessionID := sessionIDFromContext(context.Background())
 
 				vars := mergeVariables(map[string]interface{}{
 					"sessionId":                sessionID,
@@ -107,7 +107,7 @@ func TransmitPrint(ctx context.Context, message string) {
 	}
 
 	_, file, line, _ := runtime.Caller(1)
-	_, sessionID := GetOrSetTraceID(ctx)
+	sessionID := sessionIDFromContext(ctx)
 	parentSpanID := GetCurrentSpanID(ctx)
 
 	vars := mergeVariables(map[string]interface{}{
