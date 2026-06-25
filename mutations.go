@@ -248,6 +248,22 @@ const mutationUpdateServiceDetails = `mutation UpdateServiceDetails(
   )
 }`
 
+const mutationCollectUserAttribution = `mutation CollectUserAttribution(
+  $apiKey: String!,
+  $serviceUuid: String!,
+  $timestampMs: String!,
+  $dataSensitivityLevel: String,
+  $events: JSON!
+) {
+  collectUserAttribution(
+    apiKey: $apiKey,
+    serviceUuid: $serviceUuid,
+    timestampMs: $timestampMs,
+    dataSensitivityLevel: $dataSensitivityLevel,
+    events: $events
+  )
+}`
+
 const mutationDomainsToNotPassHeaderTo = `mutation DomainsToNotPassHeaderTo(
   $apiKey: String!,
   $serviceUuid: String!,
