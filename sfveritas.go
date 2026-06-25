@@ -87,10 +87,15 @@ func SetupInterceptors(opts Options) {
 	// 8. Load .sailfish config file
 	loadSailfishConfig()
 
-	// 9. Patch http.DefaultTransport with tracing transport
-	http.DefaultTransport = NewTransport(http.DefaultTransport)
+	// 9. Patch http.DefaultTransport with tracing transport. Capture the
+	// original first so the uplink can dial over it without self-instrumenting.
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = NewTransport(origTransport)
 
-	// 9. Register shutdown hook (os.Signal listener)
+	// 10. Start the WS uplink ("backend debugger"), gated on SF_UPLINK_ENABLE.
+	startUplink(cfg, origTransport)
+
+	// 11. Register shutdown hook (os.Signal listener)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

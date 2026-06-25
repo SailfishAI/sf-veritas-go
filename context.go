@@ -14,7 +14,40 @@ const (
 	ctxKeyParentSpanID
 	ctxKeyFuncSpanOverride
 	ctxKeySuppressChildren
+	ctxKeyFuncSpanPropagation
 )
+
+// propagationConfig carries a debug rule's capture config down to child spans
+// (the Go analog of the Python SDK's thread-local propagation stack). Because Go
+// threads context explicitly, propagation is a depth-bounded value on the
+// context rather than a stack: each inheriting child decrements remainingDepth.
+//
+// Limitation vs Python: this only reaches children that are themselves
+// instrumented AND receive the parent's span.Context(). It cannot cross a broken
+// context chain or StartSpanNoCtx (context.Background()).
+type propagationConfig struct {
+	ruleID         string
+	captureArgs    bool
+	captureReturn  bool
+	argLimitBytes  int
+	retLimitBytes  int
+	remainingDepth int
+}
+
+// setPropagation returns ctx carrying pc for child spans to inherit.
+func setPropagation(ctx context.Context, pc *propagationConfig) context.Context {
+	return context.WithValue(ctx, ctxKeyFuncSpanPropagation, pc)
+}
+
+// getPropagation returns the inheritable propagation config from ctx, or nil if
+// absent or exhausted (remainingDepth <= 0).
+func getPropagation(ctx context.Context) *propagationConfig {
+	pc, ok := ctx.Value(ctxKeyFuncSpanPropagation).(*propagationConfig)
+	if !ok || pc == nil || pc.remainingDepth <= 0 {
+		return nil
+	}
+	return pc
+}
 
 // GetOrSetTraceID returns the trace ID from ctx, or generates a new non-session
 // trace ID and returns a new context with it set.

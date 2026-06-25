@@ -34,6 +34,10 @@ type Span struct {
 	// Effective capture settings resolved from override header / .sailfish / global config
 	captureReturn bool // whether to capture return value
 	retLimitBytes int  // effective return value size limit
+
+	// WS debug-rule ("backend debugger") context, set when a rule matched.
+	ruleID      string // matched debug rule id ("" if none)
+	hasPostCall bool   // rule has postCall conditions → gate emit in End
 }
 
 // StartSpan begins tracking a function span. The returned Span should be
@@ -47,7 +51,7 @@ type Span struct {
 //	    // ... function body ...
 //	}
 func StartSpan(ctx context.Context, functionName string) *Span {
-	return startSpanInternal(ctx, functionName, "{}", 2)
+	return startSpanInternal(ctx, functionName, nil, "{}", 2)
 }
 
 // StartSpanWithArgs begins tracking a function span with argument capture.
@@ -60,7 +64,7 @@ func StartSpan(ctx context.Context, functionName string) *Span {
 //	defer func() { span.End(result) }()
 func StartSpanWithArgs(ctx context.Context, functionName string, args interface{}) *Span {
 	argsJSON := marshalWithLimit(args, getArgLimitBytes())
-	return startSpanInternal(ctx, functionName, argsJSON, 2)
+	return startSpanInternal(ctx, functionName, args, argsJSON, 2)
 }
 
 // StartSpanNoCtx is like StartSpanWithArgs but for functions that have no
@@ -70,7 +74,7 @@ func StartSpanWithArgs(ctx context.Context, functionName string, args interface{
 // import the instrumenter then needs to add is sfveritas itself).
 func StartSpanNoCtx(functionName string, args interface{}) *Span {
 	argsJSON := marshalWithLimit(args, getArgLimitBytes())
-	return startSpanInternal(context.Background(), functionName, argsJSON, 2)
+	return startSpanInternal(context.Background(), functionName, args, argsJSON, 2)
 }
 
 // funcspanOverrideConfig holds parsed override values from the X-Sf3-FunctionSpanCaptureOverride header.
@@ -113,7 +117,7 @@ func parseFuncSpanOverride(override string) *funcspanOverrideConfig {
 	return cfg
 }
 
-func startSpanInternal(ctx context.Context, functionName, argsJSON string, callerSkip int) *Span {
+func startSpanInternal(ctx context.Context, functionName string, args interface{}, argsJSON string, callerSkip int) *Span {
 	cfg := getConfig()
 
 	// Check if child capture is suppressed from parent context
@@ -204,7 +208,64 @@ func startSpanInternal(ctx context.Context, functionName, argsJSON string, calle
 		}
 	}
 
-	// Override header (highest priority — overrides .sailfish)
+	// WS debug rule ("backend debugger") — higher priority than .sailfish/global,
+	// lower than the per-request override header. Propagation from a parent rule
+	// short-circuits rule lookup (mirrors the Python propagation stack).
+	var matchedRuleID string
+	var matchedHasPostCall bool
+	var pushProp *propagationConfig
+	if prop := getPropagation(ctx); prop != nil {
+		matchedRuleID = prop.ruleID
+		effectiveCaptureArgs = prop.captureArgs
+		effectiveCaptureReturn = prop.captureReturn
+		if prop.argLimitBytes > 0 {
+			effectiveArgLimit = prop.argLimitBytes
+		}
+		if prop.retLimitBytes > 0 {
+			effectiveRetLimit = prop.retLimitBytes
+		}
+		// Always push the decremented config (even to 0) so an exhausted chain
+		// OVERWRITES the inherited context value — otherwise grandchildren would
+		// still see the parent's propagation through the context chain.
+		child := *prop
+		child.remainingDepth = prop.remainingDepth - 1
+		pushProp = &child
+	} else if hasActiveRules() {
+		var argMap map[string]any
+		if args != nil {
+			argMap = coerceArgs(args)
+		}
+		if rc := evaluateRulePreCall(file, functionName, argMap); rc != nil {
+			matchedRuleID = rc.ruleID
+			matchedHasPostCall = rc.hasPostCall
+			effectiveCaptureArgs = rc.captureArgs
+			effectiveCaptureReturn = rc.captureReturn
+			if rc.argLimitMB > 0 {
+				effectiveArgLimit = rc.argLimitMB * 1024 * 1024
+			}
+			if rc.returnLimitMB > 0 {
+				effectiveRetLimit = rc.returnLimitMB * 1024 * 1024
+			}
+			if rc.propagate && rc.propagateMaxDepth > 0 {
+				pushProp = &propagationConfig{
+					ruleID:         rc.ruleID,
+					captureArgs:    rc.captureArgs,
+					captureReturn:  rc.captureReturn,
+					argLimitBytes:  effectiveArgLimit,
+					retLimitBytes:  effectiveRetLimit,
+					remainingDepth: rc.propagateMaxDepth,
+				}
+			}
+		}
+	}
+
+	// While propagation depth remains, ensure children are not suppressed so they
+	// can inherit (overrides a global/.sailfish capture-children=false).
+	if pushProp != nil && pushProp.remainingDepth > 0 {
+		effectiveCaptureChildren = true
+	}
+
+	// Override header (highest priority — overrides .sailfish and WS rule)
 	if oc != nil {
 		effectiveCaptureArgs = oc.captureArgs
 		effectiveCaptureReturn = oc.captureReturn
@@ -241,6 +302,11 @@ func startSpanInternal(ctx context.Context, functionName, argsJSON string, calle
 		spanCtx = SetSuppressChildren(spanCtx, true)
 	}
 
+	// Carry debug-rule propagation to child spans (depth-bounded).
+	if pushProp != nil {
+		spanCtx = setPropagation(spanCtx, pushProp)
+	}
+
 	return &Span{
 		ctx:           spanCtx,
 		spanID:        spanID,
@@ -254,7 +320,27 @@ func startSpanInternal(ctx context.Context, functionName, argsJSON string, calle
 		prevSpanID:    parentSpanID,
 		captureReturn: effectiveCaptureReturn,
 		retLimitBytes: effectiveRetLimit,
+		ruleID:        matchedRuleID,
+		hasPostCall:   matchedHasPostCall,
 	}
+}
+
+// coerceArgs converts the raw args value to a map for preCall condition eval.
+// Direct when already a map; otherwise a JSON round-trip (paid only when a rule
+// is armed for this function).
+func coerceArgs(args interface{}) map[string]any {
+	if m, ok := args.(map[string]any); ok {
+		return m
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+	return m
 }
 
 // Context returns the context with this span's ID set as the current span.
@@ -282,6 +368,19 @@ func (s *Span) End(returnValue interface{}) {
 		returnValueStr = &rv
 	}
 
+	// WS debug-rule postCall gate: if the matched rule has postCall conditions
+	// and they don't hold, drop the (already-captured) span.
+	if s.hasPostCall {
+		meta := map[string]any{
+			"returnValue":  returnValue,
+			"durationNs":   durationNs,
+			"functionName": s.functionName,
+		}
+		if !evaluateRulePostCall(s.ruleID, meta) {
+			return
+		}
+	}
+
 	sessionID := sessionIDFromContext(s.ctx)
 
 	vars := mergeVariables(map[string]interface{}{
@@ -301,6 +400,17 @@ func (s *Span) End(returnValue interface{}) {
 	})
 
 	nonBlockingPost("CollectFunctionSpans", mutationCollectFunctionSpans, vars)
+
+	// Account this emitted span against an active debug session's budgets
+	// (post-then-record, matching Python). Byte-count proxy = the variable-size
+	// payload (args + return). Crossing a budget deactivates the session.
+	if funcspanSessionIsActive() {
+		var rb int
+		if returnValueStr != nil {
+			rb = len(*returnValueStr)
+		}
+		recordSpanEmitted(int64(len(s.argsJSON) + rb))
+	}
 
 	if cfg := getConfig(); cfg != nil && cfg.debug {
 		fmt.Fprintf(os.Stderr, "[sfveritas] Function span: %s (%s) duration=%dns\n",
@@ -496,7 +606,7 @@ func getReturnLimitBytes() int {
 //	    return doWork(ctx)
 //	})
 func TraceFunc[T any](ctx context.Context, name string, fn func(ctx context.Context) (T, error)) (T, error) {
-	span := startSpanInternal(ctx, name, "{}", 2)
+	span := startSpanInternal(ctx, name, nil, "{}", 2)
 
 	result, err := fn(span.Context())
 
@@ -513,7 +623,7 @@ func TraceFunc[T any](ctx context.Context, name string, fn func(ctx context.Cont
 // TraceFuncWithArgs wraps a function call with span tracking and argument capture.
 func TraceFuncWithArgs[T any](ctx context.Context, name string, args interface{}, fn func(ctx context.Context) (T, error)) (T, error) {
 	argsJSON := marshalWithLimit(args, getArgLimitBytes())
-	span := startSpanInternal(ctx, name, argsJSON, 2)
+	span := startSpanInternal(ctx, name, args, argsJSON, 2)
 
 	result, err := fn(span.Context())
 

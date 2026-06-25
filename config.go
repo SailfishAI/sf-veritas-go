@@ -24,6 +24,10 @@ const (
 	parentSessionHeader     = "X-Sf4-Prid"
 	funcspanOverrideHeader  = "X-Sf3-FunctionSpanCaptureOverride"
 	telemetryOutboundHeader = "X-Sf3-TelemetryOutbound"
+
+	// WS uplink ("backend debugger") — see uplink.go.
+	wsNotifyPath               = "/ws/notify/"
+	clientKindBackendCollector = "backendCollector"
 )
 
 // Options configures the Sailfish telemetry collector.
@@ -135,6 +139,10 @@ type config struct {
 
 	// Environment detection
 	isFromLocalService bool
+
+	// WS uplink ("backend debugger")
+	uplinkEnabled bool   // SF_UPLINK_ENABLE != "false" (default true)
+	uplinkURL     string // SF_UPLINK_URL override
 }
 
 var (
@@ -345,6 +353,8 @@ func initConfig(opts Options) *config {
 			disabledInboundRoutes:    disabledRoutes,
 			stackDepthCodeTraceDepth: stackDepthCodeTrace,
 			isFromLocalService:       isLocal,
+			uplinkEnabled:            os.Getenv("SF_UPLINK_ENABLE") != "false",
+			uplinkURL:                os.Getenv("SF_UPLINK_URL"),
 		}
 	})
 	return globalConfig

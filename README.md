@@ -87,6 +87,29 @@ variables (`SAILFISH_GRAPHQL_ENDPOINT`, `SF_FUNCSPAN_*`, `SF_NETWORKHOP_*`,
 [full guide](https://docs.sailfish.ai/enterprise/integrate-with-your-code/backend/go)
 for the complete reference.
 
+## Debug Mode
+
+Sailfish can turn on full function-span capture (arguments, return values, timing)
+for your service from the dashboard, for a time- and budget-bounded window — via a
+lightweight WebSocket uplink that starts with `SetupInterceptors` (no extra code).
+Capture stops automatically on TTL/budget expiry or cancel. Disable the uplink with
+`SF_UPLINK_ENABLE=false`.
+
+Because Go has no runtime profiler, debug mode only elevates capture on functions
+that are already instrumented (manual `StartSpan`/`TraceFunc` or `-toolexec`); it
+can't instrument arbitrary functions at runtime. Build with `-toolexec` for the
+most useful debug mode.
+
+## Performance
+
+Telemetry is sent on a non-blocking background transport (enqueue is ~5 ns), so it
+stays off the request path. The synchronous cost is small and per-operation —
+roughly ~9 µs for the inbound middleware per request and ~8-10 µs per instrumented
+function span (dominated by Go stack introspection). For very hot paths, use manual
+`StartSpan`/`TraceFunc` or function-span sampling rather than instrumenting every
+function. Full methodology, numbers, and how to run the benchmarks
+(`go test -bench=. -benchmem ./` and `go run ./bench`) are in [BENCHMARKS.md](./BENCHMARKS.md).
+
 ## License
 
 Business Source License 1.1 (BUSL-1.1) — see [LICENSE](./LICENSE). Converts to

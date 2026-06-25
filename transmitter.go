@@ -250,8 +250,12 @@ func nonBlockingPost(operationName, query string, variables map[string]interface
 	}
 }
 
-// Shutdown flushes any remaining telemetry and stops the background goroutine.
+// Shutdown flushes any remaining telemetry and stops the background goroutines
+// (transmitter + uplink). Idempotent.
 func Shutdown() {
+	// Tear down the WS uplink first so it can send sessionExpired("shutdown")
+	// before transports go away.
+	stopUplink()
 	t := globalTransmitter
 	if t == nil {
 		return
